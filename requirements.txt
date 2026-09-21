@@ -1,0 +1,11 @@
+# Objective 1: Docling extraction + Ollama client + LangGraph orchestration
+docling>=2.0.0
+langgraph>=0.2.0
+langchain-core>=0.3.0
+requests>=2.31.0
+
+# Objective 2: knowledge graph + retrieval
+networkx>=3.0
+
+# dev / test
+pytest>=8.0.0

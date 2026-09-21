@@ -1,0 +1,117 @@
+# ==========================================
+# 1. Python & Virtual Environment Exclusions
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ==========================================
+# 2. Environment Variables & Secrets
+# ==========================================
+# NEVER commit credentials, API keys, or database passwords
+.env
+.env.*
+!.env.example
+secrets.json
+config.private.json
+
+# ==========================================
+# 3. Model Weights & Local AI Caches
+# ==========================================
+# Local LLMs / Quantized Weights / HuggingFace & Docling Model Caches
+*.bin
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
+.cache/
+huggingface/
+docling_models/
+.docling/
+ollama_models/
+
+# ==========================================
+# 4. Local Knowledge Graph & Database Storage
+# ==========================================
+# Local Graph DBs (Neo4j, NetworkX exports, Vector Stores)
+data/
+data/raw/
+data/processed/
+data/graphs/
+*.gephi
+*.gexf
+*.graphml
+*.pkl
+*.pickle
+*.sqlite3
+*.db
+neo4j_data/
+neo4j_logs/
+chroma_db/
+faiss_index/
+
+# ==========================================
+# 5. Evaluation & Output Logs
+# ==========================================
+logs/
+*.log
+*.csv
+*.parquet
+outputs/
+eval_results/
+ragas_eval_cache/
+
+# ==========================================
+# 6. IDEs, Editors & OS System Files
+# ==========================================
+# Visual Studio Code & PyCharm
+.vscode/
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints
+
+
+
+# Environment & Test Caches
+venv/
+.pytest_cache/
+
+# Local Extraction Artifacts & Graph Exports
+_extracted_images/
+elements.json
+graph.json
