@@ -1,22 +1,4 @@
-"""
-Question-answering graph — Objective 2.
-
-Implements exactly the mechanism described in the project abstract:
-"a routing agent selects a suitable retrieval strategy, while an
-evidence-verification agent checks the relevance and adequacy of retrieved
-information and initiates further retrieval when necessary."
-
-Graph shape:
-
-    route_question -> retrieve -> verify_evidence --(insufficient, retries left)--> retrieve
-                                        |
-                                        +--(sufficient, or out of retries)--> generate_answer -> END
-
-The conditional edge (`_should_retry`) is a pure router: it only reads state
-and returns which node to go to next. All state changes happen inside node
-functions, which return partial-state dicts that LangGraph merges in — this
-keeps the loop's behavior predictable and testable.
-"""
+"""Question-answering graph — Objective 2."""
 
 from __future__ import annotations
 
@@ -48,8 +30,6 @@ ANSWER:
 
 
 class QAPipeline:
-    """Builds and runs the routing -> retrieval -> verification QA graph."""
-
     def __init__(
         self,
         config: PrivGraphAIConfig,
@@ -85,16 +65,12 @@ class QAPipeline:
         graph.add_edge("generate_answer", END)
         return graph.compile()
 
-    # -- nodes (all return partial-state dicts; none mutate `state` in place) --
-
     def _route_node(self, state: PrivGraphAIState) -> dict:
         strategy = self.router.route(state["question"])
         return {"strategy": strategy, "retry_count": 0}
 
     def _retrieve_node(self, state: PrivGraphAIState) -> dict:
         retry_count = state.get("retry_count", 0)
-        # Widen to hybrid on any retry — a single-strategy pass that failed
-        # verification gets the other retrieval path added, not just repeated.
         strategy = "hybrid" if retry_count > 0 else state.get("strategy", "hybrid")
         question = state["question"]
 
@@ -122,8 +98,6 @@ class QAPipeline:
         )
         return {"answer": answer}
 
-    # -- conditional router (read-only: no state mutation) ---------------
-
     def _should_retry(self, state: PrivGraphAIState) -> str:
         if state.get("sufficient"):
             return "answer"
@@ -131,8 +105,6 @@ class QAPipeline:
             logger.info("Max retries reached without sufficient evidence; answering with best effort.")
             return "answer"
         return "retry"
-
-    # -- helpers -----------------------------------------------------------
 
     @staticmethod
     def _dedupe(items: list[dict]) -> list[dict]:
@@ -144,8 +116,6 @@ class QAPipeline:
                 seen.add(eid)
                 out.append(item)
         return out
-
-    # -- public API --------------------------------------------------------
 
     def ask(self, question: str) -> PrivGraphAIState:
         initial: PrivGraphAIState = {"question": question, "errors": []}

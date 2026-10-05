@@ -1,15 +1,3 @@
-"""
-Dry-run test for Objective 1's LangGraph orchestration.
-
-Docling and a running Ollama server aren't available in every environment
-(CI, a reviewer's machine, this sandbox), so this test injects fake
-implementations of both via PrivGraphAIPipeline's constructor. That proves
-the *graph wiring* -- parse_document -> process_elements -> END, state
-threaded through correctly -- is correct independent of the heavy runtime
-dependencies. Swap in the real DoclingParser / OllamaClient to exercise the
-full on-device path.
-"""
-
 from privgraphai.docling_parser import MultimodalElement
 from privgraphai.pipeline import PrivGraphAIPipeline
 
@@ -49,7 +37,7 @@ def test_pipeline_runs_end_to_end_with_fakes():
     assert "normalized by" in by_id["table-0"]["ai_description"]
     assert "normalized by" in by_id["formula-0"]["ai_description"]
     assert "caption by" in by_id["figure-0"]["ai_description"]
-    assert by_id["text-0"]["ai_description"] is None  # plain text needs no local-model pass
+    assert by_id["text-0"]["ai_description"] is None
 
 
 def test_pipeline_records_parse_errors_without_crashing():
@@ -62,9 +50,3 @@ def test_pipeline_records_parse_errors_without_crashing():
 
     assert result["processed_elements"] == []
     assert any("simulated Docling failure" in e for e in result["errors"])
-
-
-if __name__ == "__main__":
-    test_pipeline_runs_end_to_end_with_fakes()
-    test_pipeline_records_parse_errors_without_crashing()
-    print("OK: both dry-run tests passed.")

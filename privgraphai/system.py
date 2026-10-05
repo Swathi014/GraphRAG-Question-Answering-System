@@ -1,18 +1,13 @@
 """
 Top-level PrivGraphAI facade — combines Objective 1 (ingestion) and
 Objective 2 (knowledge-graph construction + routing/verification QA).
-
-    ingest(pdf_path)  -> Docling + Ollama ingestion (Obj 1), then knowledge-
-                         graph construction + vector index build (Obj 2)
-    save(path) / load(path, ...) -> persist/restore the knowledge graph so
-                         `ingest` and `ask` can run as separate invocations
-    ask(question)     -> route -> retrieve -> verify (loop) -> answer
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -43,22 +38,33 @@ class PrivGraphAISystem:
         self.knowledge_graph: Optional[KnowledgeGraph] = None
         self._last_processed_elements: list[dict] = []
 
-    # -- Objective 1 + graph construction (Objective 2, part 1) -----------
-
-    def ingest(self, source_path: str) -> dict:
-        """Run ingestion (Objective 1), then build the knowledge graph and
-        vector index from its output (Objective 2)."""
+    def ingest(
+        self,
+        source_path: str,
+        stop_event: Optional[threading.Event] = None,
+        progress_cb=None,
+    ) -> dict:
+        """`stop_event`, if set partway through, stops the knowledge-graph
+        construction step early (cooperative — see ExtractionAgent.build_graph).
+        The Docling parse itself is a single call and can't be interrupted
+        this way. `progress_cb(done, total)` is called after each element
+        during graph construction, if provided."""
         ingest_result = self.ingestion.run(source_path)
         processed = ingest_result.get("processed_elements", [])
         self._last_processed_elements = processed
 
-        self.knowledge_graph = self.extraction_agent.build_graph(processed)
+        self.knowledge_graph = self.extraction_agent.build_graph(
+            processed, stop_event=stop_event, progress_cb=progress_cb
+        )
         self.vector_index.build(processed)
 
+        stopped_early = bool(stop_event is not None and stop_event.is_set())
         return {
             "ingestion_errors": ingest_result.get("errors", []),
             "graph_stats": self.knowledge_graph.stats(),
             "num_vector_entries": len(self.vector_index),
+            "num_elements": len(processed),
+            "stopped_early": stopped_early,
         }
 
     def save(self, graph_path: str, elements_path: Optional[str] = None) -> None:
@@ -77,8 +83,6 @@ class PrivGraphAISystem:
             self.vector_index.build(self._last_processed_elements)
         else:
             logger.warning("No elements_path given — vector ('vector'/'hybrid') retrieval will return nothing.")
-
-    # -- Objective 2, part 2: routing / retrieval / verification loop -----
 
     def ask(self, question: str) -> dict:
         if self.knowledge_graph is None:

@@ -1,13 +1,4 @@
-"""Command-line entry point for PrivGraphAI (Objectives 1 & 2).
-
-Usage:
-    # Build the knowledge graph + vector index from a document:
-    python -m privgraphai.cli ingest path/to/document.pdf --graph graph.json --elements elements.json
-
-    # Ask a question against a previously built graph:
-    python -m privgraphai.cli ask "How does the routing agent decide between graph and vector retrieval?" \\
-        --graph graph.json --elements elements.json
-"""
+"""Command-line entry point for PrivGraphAI (Objectives 1 & 2)."""
 
 from __future__ import annotations
 
@@ -39,8 +30,14 @@ def _cmd_ask(args: argparse.Namespace) -> int:
 
     print(f"\nStrategy used : {result.get('strategy')}")
     print(f"Retries       : {result.get('retry_count', 0) - 1}")
-    print(f"Evidence found: {len(result.get('retrieved', []))} element(s)")
+    retrieved = result.get("retrieved", [])
+    print(f"Evidence found: {len(retrieved)} element(s)")
+    for item in retrieved:
+        snippet = (item.get("content") or "").replace("\n", " ").strip()[:120]
+        print(f"  - [{item.get('element_id')}] {snippet}{'...' if len(item.get('content') or '') > 120 else ''}")
     print(f"Sufficient?   : {result.get('sufficient')}")
+    if not result.get("sufficient"):
+        print(f"Verifier said missing: {result.get('missing')}")
     print(f"\nAnswer:\n{result.get('answer', '(no answer generated)')}")
     return 0
 
@@ -54,14 +51,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_ingest.add_argument("source", help="Path to a PDF (or other Docling-supported) document")
     p_ingest.add_argument("--graph", default="graph.json", help="Where to save the knowledge graph")
     p_ingest.add_argument("--elements", default="elements.json", help="Where to save the processed elements")
-    p_ingest.add_argument("-v", "--verbose", action="store_true")  # also accepted after the subcommand
+    p_ingest.add_argument("-v", "--verbose", action="store_true")
     p_ingest.set_defaults(func=_cmd_ingest)
 
     p_ask = sub.add_parser("ask", help="Ask a question against a previously built knowledge graph")
     p_ask.add_argument("question")
     p_ask.add_argument("--graph", default="graph.json", help="Path to a saved knowledge graph")
     p_ask.add_argument("--elements", default="elements.json", help="Path to saved processed elements")
-    p_ask.add_argument("-v", "--verbose", action="store_true")  # also accepted after the subcommand
+    p_ask.add_argument("-v", "--verbose", action="store_true")
     p_ask.set_defaults(func=_cmd_ask)
 
     args = parser.parse_args(argv)

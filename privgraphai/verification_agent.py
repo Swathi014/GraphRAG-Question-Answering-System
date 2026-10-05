@@ -1,11 +1,4 @@
-"""
-Evidence-verification agent — Objective 2.
-
-Given a question and the evidence retrieved so far, decides whether that
-evidence is sufficient to answer reliably. If not, the QA graph (see
-qa_pipeline.py) loops back for another retrieval pass with a widened
-strategy, up to a bounded number of retries.
-"""
+"""Evidence-verification agent — Objective 2."""
 
 from __future__ import annotations
 
@@ -67,9 +60,6 @@ class VerificationAgent:
 
     @staticmethod
     def _coerce_bool(value) -> bool:
-        """Handle small models that sometimes return "true"/"false" as a
-        JSON string instead of a real boolean — bool("false") is True in
-        Python, so a naive bool(value) would silently invert that case."""
         if isinstance(value, str):
             return value.strip().lower() == "true"
         return bool(value)

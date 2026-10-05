@@ -1,13 +1,4 @@
-"""
-PrivGraphAI on-device ingestion pipeline — Objective 1.
-
-Wires together Docling (structural extraction), Ollama (local quantized LLM +
-VLM), and LangGraph (stateful orchestration): parse_document -> process_elements.
-
-This is unchanged from Objective 1's delivery — Objective 2's new modules
-(graph_store, extraction_agent, qa_pipeline, ...) build on top of its output
-rather than modifying it, so ingestion stays independently testable.
-"""
+"""PrivGraphAI on-device ingestion pipeline — Objective 1."""
 
 from __future__ import annotations
 
@@ -37,8 +28,6 @@ _FIGURE_CAPTION_PROMPT = (
 
 
 class PrivGraphAIPipeline:
-    """Builds and runs the on-device multimodal ingestion graph (Objective 1)."""
-
     def __init__(
         self,
         config: PrivGraphAIConfig = DEFAULT_CONFIG,
@@ -100,7 +89,6 @@ class PrivGraphAIPipeline:
         return record
 
     def run(self, source_path: str) -> PrivGraphAIState:
-        """Run the full on-device ingestion pipeline on a single source document."""
         if not self.llm.is_available():
             logger.warning(
                 "Ollama server at %s is not reachable. Is `ollama serve` running, "

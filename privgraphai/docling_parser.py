@@ -1,14 +1,4 @@
-"""
-Docling-based structural extraction for PrivGraphAI.
-
-Parses a source document (PDF, DOCX, ...) and returns a normalized list of
-`MultimodalElement` objects — text blocks, tables, figures and formulas —
-each tagged with its page number and type, ready for downstream processing.
-
-Docling is imported lazily inside `_get_converter()` so this module (and the
-pipeline it's wired into) can still be imported and unit-tested in
-environments where the docling package isn't installed.
-"""
+"""Docling-based structural extraction for PrivGraphAI."""
 
 from __future__ import annotations
 
@@ -24,38 +14,32 @@ ElementType = Literal["text", "table", "figure", "formula"]
 
 @dataclass
 class MultimodalElement:
-    """A single structural element extracted from a source document."""
-
     element_id: str
     element_type: ElementType
     page_number: Optional[int]
-    content: str                        # markdown/plain-text serialization
-    image_path: Optional[str] = None    # populated for figures exported as images
+    content: str
+    image_path: Optional[str] = None
     metadata: dict = field(default_factory=dict)
 
 
 class DoclingParser:
-    """Thin wrapper around Docling's `DocumentConverter`."""
-
     def __init__(self, image_export_dir: str | Path = "./_extracted_images"):
         self.image_export_dir = Path(image_export_dir)
         self.image_export_dir.mkdir(parents=True, exist_ok=True)
-        self._converter: Any = None  # constructed lazily on first use
+        self._converter: Any = None
 
     def _get_converter(self):
         if self._converter is None:
             try:
                 from docling.document_converter import DocumentConverter
-            except ImportError as exc:  # pragma: no cover - exercised only without docling
+            except ImportError as exc:
                 raise ImportError(
-                    "docling is not installed. Install it with `pip install docling` "
-                    "to run real document parsing (see requirements.txt)."
+                    "docling is not installed. Install it with `pip install docling`."
                 ) from exc
             self._converter = DocumentConverter()
         return self._converter
 
     def parse(self, source: str | Path) -> list[MultimodalElement]:
-        """Parse `source` (a file path or URL) into a flat list of MultimodalElements."""
         converter = self._get_converter()
         logger.info("Parsing document with Docling: %s", source)
         result = converter.convert(str(source))
@@ -75,8 +59,6 @@ class DoclingParser:
             sum(e.element_type == "formula" for e in elements),
         )
         return elements
-
-    # -- private helpers ---------------------------------------------------
 
     def _extract_text_and_formulas(self, doc) -> list[MultimodalElement]:
         elements: list[MultimodalElement] = []
@@ -99,7 +81,7 @@ class DoclingParser:
         for i, table in enumerate(getattr(doc, "tables", [])):
             try:
                 content = table.export_to_markdown(doc=doc)
-            except Exception:  # pragma: no cover - defensive fallback
+            except Exception:
                 content = str(table)
             elements.append(
                 MultimodalElement(
@@ -120,7 +102,7 @@ class DoclingParser:
                 if pil_image is not None:
                     image_path = str(self.image_export_dir / f"figure-{i}.png")
                     pil_image.save(image_path)
-            except Exception as exc:  # pragma: no cover - depends on docling internals
+            except Exception as exc:
                 logger.warning("Could not export image for figure-%d: %s", i, exc)
 
             caption = ""
@@ -128,7 +110,7 @@ class DoclingParser:
             if callable(caption_fn):
                 try:
                     caption = caption_fn(doc) or ""
-                except Exception:  # pragma: no cover
+                except Exception:
                     caption = ""
 
             elements.append(

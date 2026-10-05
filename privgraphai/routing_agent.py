@@ -1,15 +1,4 @@
-"""
-Routing agent — Objective 2.
-
-Given a question, decides which retrieval strategy PrivGraphAI should use:
-  - "graph"  : the knowledge-graph, multi-hop walk (comparisons, "how does
-               X relate to Y", questions needing several connected facts)
-  - "vector" : direct embedding similarity lookup (single-fact questions)
-  - "hybrid" : both, merged
-
-Tries an LLM classification first; falls back to a small keyword heuristic
-if the model's output can't be parsed, so this step never blocks the pipeline.
-"""
+"""Routing agent — Objective 2."""
 
 from __future__ import annotations
 

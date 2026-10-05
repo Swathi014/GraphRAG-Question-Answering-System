@@ -1,11 +1,15 @@
 """
-Dry-run tests for Objective 2.
+Dry-run and regression tests for Objective 2.
 
-Docling and a running Ollama server aren't required — a FakeOllamaClient
-stands in, driven by scripted responses so we can force specific paths
-through the code: a JSON entity/relation extraction, a routing decision, an
-insufficient-then-sufficient verification sequence (to prove the retry loop
-actually loops), and a final answer.
+Docling and a running Ollama server aren't required — a FakeOllamaClient /
+ScriptedOllamaClient stands in, driven by scripted responses so we can force
+specific paths through the code: a JSON entity/relation extraction, a
+routing decision, an insufficient-then-sufficient verification sequence (to
+prove the retry loop actually loops), and a final answer.
+
+Several tests below (the `_parse_json_relaxed` ones in particular) are built
+directly from real failures captured while running Objective 2 against an
+actual 20+ page research paper — not synthetic cases.
 """
 
 import json
@@ -42,8 +46,67 @@ class ScriptedOllamaClient:
 
 
 # --------------------------------------------------------------------------
+# ExtractionAgent._parse_json_relaxed -- real failure cases seen in the wild
+# --------------------------------------------------------------------------
+
+def test_parse_json_relaxed_handles_clean_json():
+    result = ExtractionAgent._parse_json_relaxed('{"entities": [{"name": "X", "type": "y"}], "relations": []}')
+    assert result == {"entities": [{"name": "X", "type": "y"}], "relations": []}
+
+
+def test_parse_json_relaxed_picks_the_real_object_over_an_empty_false_start():
+    # Observed verbatim: the model emitted "{}" then, on the next line, the actual answer.
+    raw = '{}\n{"entities": [], "relations": []}'
+    result = ExtractionAgent._parse_json_relaxed(raw)
+    assert result == {"entities": [], "relations": []}
+
+
+def test_parse_json_relaxed_repairs_unclosed_relations_array():
+    # Observed verbatim (NeoChip case): "relations" array opened with `[` but
+    # never closed with `]` before the trailing `}}}`.
+    raw = ('{"entities": [{"name": "NeoChip", "type": "organization"}], '
+           '"relations": [{"source": "NeoChip", "relation": "shares", "target": "surged"}}}')
+    result = ExtractionAgent._parse_json_relaxed(raw)
+    assert result["entities"] == [{"name": "NeoChip", "type": "organization"}]
+    assert result["relations"] == [{"source": "NeoChip", "relation": "shares", "target": "surged"}]
+
+
+def test_parse_json_relaxed_repairs_unclosed_relations_array_second_example():
+    # Observed verbatim (Microsoft case) -- same failure shape, different content.
+    raw = ('{"entities": [{"name": "Microsoft", "type": "organization"}], '
+           '"relations": [{"source": "Microsoft (2023)", "relation": "relatedTo", '
+           '"target": "large language models"}}}')
+    result = ExtractionAgent._parse_json_relaxed(raw)
+    assert result["entities"] == [{"name": "Microsoft", "type": "organization"}]
+    assert result["relations"][0]["target"] == "large language models"
+
+
+def test_parse_json_relaxed_gives_up_gracefully_on_true_garbage():
+    result = ExtractionAgent._parse_json_relaxed("not json at all, no braces here")
+    assert result == {"entities": [], "relations": []}
+
+
+def test_parse_json_relaxed_handles_empty_string():
+    assert ExtractionAgent._parse_json_relaxed("") == {"entities": [], "relations": []}
+
+
+# --------------------------------------------------------------------------
 # ExtractionAgent -> KnowledgeGraph
 # --------------------------------------------------------------------------
+
+def test_extraction_agent_skips_trivial_short_elements():
+    """Elements shorter than config.min_extraction_chars should never reach
+    the LLM at all -- proven here by giving a client with zero scripted
+    replies and confirming it's never called (would raise if it were)."""
+    processed_elements = [
+        {"element_id": "text-0", "element_type": "text", "content": "3", "ai_description": None},
+        {"element_id": "text-1", "element_type": "text", "content": "Fig. 2", "ai_description": None},
+    ]
+    llm = ScriptedOllamaClient(scripted_replies=[])  # would raise AssertionError if called
+    agent = ExtractionAgent(config=_FakeConfig(), ollama_client=llm)
+    kg = agent.build_graph(processed_elements)
+    assert kg.stats()["num_entities"] == 0
+
 
 def test_extraction_agent_builds_graph_from_processed_elements():
     processed_elements = [
@@ -72,7 +135,7 @@ def test_extraction_agent_builds_graph_from_processed_elements():
     hop = kg.multi_hop_elements(seeds, max_hops=2)
     element_ids = {e["element_id"] for e in hop}
     assert "text-0" in element_ids  # direct mention
-    assert "table-0" not in element_ids  # 2 hops via Ollama relation doesn't reach table-0 (no link)
+    assert "table-0" not in element_ids  # not reachable from Qwen2.5/Ollama
 
 
 # --------------------------------------------------------------------------
@@ -214,15 +277,23 @@ class _FakeConfig:
     """Minimal stand-in for PrivGraphAIConfig — avoids depending on Ollama
     model names that don't matter for these tests."""
 
-    def __init__(self, qa_max_retries=2, graph_max_hops=2):
+    def __init__(self, qa_max_retries=2, graph_max_hops=2, min_extraction_chars=15):
         self.text_model = "fake-text-model"
         self.vision_model = "fake-vision-model"
         self.embedding_model = "fake-embed-model"
         self.qa_max_retries = qa_max_retries
         self.graph_max_hops = graph_max_hops
+        self.min_extraction_chars = min_extraction_chars
 
 
 if __name__ == "__main__":
+    test_parse_json_relaxed_handles_clean_json()
+    test_parse_json_relaxed_picks_the_real_object_over_an_empty_false_start()
+    test_parse_json_relaxed_repairs_unclosed_relations_array()
+    test_parse_json_relaxed_repairs_unclosed_relations_array_second_example()
+    test_parse_json_relaxed_gives_up_gracefully_on_true_garbage()
+    test_parse_json_relaxed_handles_empty_string()
+    test_extraction_agent_skips_trivial_short_elements()
     test_extraction_agent_builds_graph_from_processed_elements()
     test_routing_agent_parses_llm_json()
     test_routing_agent_falls_back_to_heuristic_on_bad_json()

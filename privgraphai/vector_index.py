@@ -1,15 +1,4 @@
-"""
-Minimal local vector index — Objective 2's "vector" retrieval path.
-
-Uses Ollama's embeddings endpoint (a small local embedding model, e.g.
-`nomic-embed-text`) so the routing agent has a genuine second retrieval
-strategy to choose between, alongside the knowledge graph.
-
-This is NOT the full Vector-RAG baseline system used for later comparative
-evaluation — that's a separate, standalone system. This is the lightweight
-direct-lookup path PrivGraphAI itself falls back to for simple, single-hop
-questions, or blends in for hybrid retrieval.
-"""
+"""Minimal local vector index — Objective 2's "vector" retrieval path."""
 
 from __future__ import annotations
 
