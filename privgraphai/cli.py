@@ -34,7 +34,8 @@ def _cmd_ask(args: argparse.Namespace) -> int:
     print(f"Evidence found: {len(retrieved)} element(s)")
     for item in retrieved:
         snippet = (item.get("content") or "").replace("\n", " ").strip()[:120]
-        print(f"  - [{item.get('element_id')}] {snippet}{'...' if len(item.get('content') or '') > 120 else ''}")
+        output_str = f"  - [{item.get('element_id')}] {snippet}{'...' if len(item.get('content') or '') > 120 else ''}"
+        print(output_str.encode(sys.stdout.encoding, errors='replace').decode(sys.stdout.encoding))
     print(f"Sufficient?   : {result.get('sufficient')}")
     if not result.get("sufficient"):
         print(f"Verifier said missing: {result.get('missing')}")
@@ -43,6 +44,10 @@ def _cmd_ask(args: argparse.Namespace) -> int:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+
     parser = argparse.ArgumentParser(description="PrivGraphAI — on-device Agentic GraphRAG (Objectives 1 & 2)")
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)

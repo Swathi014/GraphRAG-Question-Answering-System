@@ -13,7 +13,11 @@ logger = logging.getLogger("privgraphai.verification_agent")
 _VERIFY_PROMPT = """You are checking whether the EVIDENCE below is sufficient to answer the QUESTION.
 
 Return ONLY a JSON object: {{"sufficient": true|false, "missing": "..."}}
-"missing" should briefly say what's missing, or be an empty string if sufficient.
+
+Rules:
+- Set "sufficient" to true if the evidence contains the answer or a reasonable partial answer.
+- Set "sufficient" to false only if the evidence has nothing relevant to the question.
+- "missing" must describe information that is NOT in the evidence. If the answer is in the evidence, "sufficient" must be true and "missing" an empty string.
 
 QUESTION: {question}
 

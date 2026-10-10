@@ -17,12 +17,14 @@ from .verification_agent import VerificationAgent
 
 logger = logging.getLogger("privgraphai.qa_pipeline")
 
+_VECTOR_TOP_K = 8
+
 _ANSWER_PROMPT = """Answer the QUESTION using ONLY the EVIDENCE below. If the evidence is
 insufficient, say plainly what's missing rather than guessing.
 
 QUESTION: {question}
 
-EVIDENCE:
+EVIDENCE (listed in document order, lower numbers appear earlier in the document):
 {evidence}
 
 ANSWER:
@@ -79,18 +81,18 @@ class QAPipeline:
             seed_ids = self.kg.find_entities(question)
             retrieved.extend(self.kg.multi_hop_elements(seed_ids, max_hops=self.config.graph_max_hops))
         if strategy in ("vector", "hybrid"):
-            retrieved.extend(self.vector_index.search(question, top_k=3))
+            retrieved.extend(self.vector_index.search(question, top_k=_VECTOR_TOP_K))
 
         deduped = self._dedupe(retrieved)
         return {"retrieved": deduped, "retry_count": retry_count + 1, "strategy": strategy}
 
     def _verify_node(self, state: PrivGraphAIState) -> dict:
-        evidence_text = "\n\n".join(item.get("content", "") for item in state.get("retrieved", []))
+        evidence_text = self._evidence_text(state.get("retrieved", []))
         sufficient, missing = self.verifier.verify(state["question"], evidence_text)
         return {"sufficient": sufficient, "missing": missing}
 
     def _answer_node(self, state: PrivGraphAIState) -> dict:
-        evidence_text = "\n\n".join(item.get("content", "") for item in state.get("retrieved", []))
+        evidence_text = self._evidence_text(state.get("retrieved", []))
         answer = self.llm.generate_text(
             _ANSWER_PROMPT.format(question=state["question"], evidence=evidence_text[:4000]),
             self.config.text_model,
@@ -105,6 +107,19 @@ class QAPipeline:
             logger.info("Max retries reached without sufficient evidence; answering with best effort.")
             return "answer"
         return "retry"
+
+    @staticmethod
+    def _evidence_text(items: list[dict]) -> str:
+        """Join evidence in document order, labelled with element ids."""
+
+        def sort_key(item: dict):
+            kind, _, num = str(item.get("element_id", "")).rpartition("-")
+            return (kind, int(num) if num.isdigit() else 0)
+
+        return "\n\n".join(
+            f"[{item.get('element_id')}] {item.get('content', '')}"
+            for item in sorted(items, key=sort_key)
+        )
 
     @staticmethod
     def _dedupe(items: list[dict]) -> list[dict]:

@@ -11,6 +11,17 @@ logger = logging.getLogger("privgraphai.docling_parser")
 
 ElementType = Literal["text", "table", "figure", "formula"]
 
+# Some PDF fonts map ligatures to wrong Unicode characters in the text layer.
+_LIGATURE_FIXES = str.maketrans(
+    {
+        "\u019f": "ti",  # Ɵ  (ApplicaƟon -> Application)
+        "\u014c": "ft",  # Ō  (soŌware -> software)
+        "\u015b": "tt",  # ś  (Kośayam -> Kottayam)
+        "\u01a9": "tt",  # Ʃ  (aƩached -> attached)
+        "\uf0b7": "- ",  # private-use bullet
+    }
+)
+
 
 @dataclass
 class MultimodalElement:
@@ -23,9 +34,14 @@ class MultimodalElement:
 
 
 class DoclingParser:
-    def __init__(self, image_export_dir: str | Path = "./_extracted_images"):
+    def __init__(
+        self,
+        image_export_dir: str | Path = "./_extracted_images",
+        force_ocr: bool = False,
+    ):
         self.image_export_dir = Path(image_export_dir)
         self.image_export_dir.mkdir(parents=True, exist_ok=True)
+        self.force_ocr = force_ocr
         self._converter: Any = None
 
     def _get_converter(self):
@@ -36,7 +52,25 @@ class DoclingParser:
                 raise ImportError(
                     "docling is not installed. Install it with `pip install docling`."
                 ) from exc
-            self._converter = DocumentConverter()
+
+            if self.force_ocr:
+                from docling.datamodel.base_models import InputFormat
+                from docling.datamodel.pipeline_options import PdfPipelineOptions
+                from docling.document_converter import PdfFormatOption
+
+                # Ignore the PDF's embedded text layer and OCR every page.
+                pipeline_options = PdfPipelineOptions()
+                pipeline_options.do_ocr = True
+                pipeline_options.ocr_options.force_full_page_ocr = True
+                self._converter = DocumentConverter(
+                    format_options={
+                        InputFormat.PDF: PdfFormatOption(
+                            pipeline_options=pipeline_options
+                        )
+                    }
+                )
+            else:
+                self._converter = DocumentConverter()
         return self._converter
 
     def parse(self, source: str | Path) -> list[MultimodalElement]:
@@ -70,7 +104,7 @@ class DoclingParser:
                     element_id=f"text-{i}",
                     element_type=element_type,
                     page_number=self._first_page_number(item),
-                    content=getattr(item, "text", "") or "",
+                    content=(getattr(item, "text", "") or "").translate(_LIGATURE_FIXES),
                     metadata={"label": label},
                 )
             )
