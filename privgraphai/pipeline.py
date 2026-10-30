@@ -1,4 +1,17 @@
-"""PrivGraphAI on-device ingestion pipeline — Objective 1."""
+"""PrivGraphAI on-device ingestion pipeline - Objective 1.
+
+PROPOSED version. Changes from the original:
+  * Figures: the indexed description now combines the caption, the text found inside
+    the figure (grouped in columns by the parser) and the Moondream description, so
+    chart values survive even if the vision model misreads them. A failing vision call
+    no longer drops the whole figure.
+  * Formulas: no LLM paraphrase (a 3B model can change signs and symbols). The LaTeX
+    is kept as is, plus the sentence that follows it when it starts with "where"/"with"
+    (it defines the symbols). Other neighbouring text is not added, because it made the
+    formula element match unrelated questions.
+  * Tables: the LLM description is kept, and the exact markdown table is appended so
+    numbers are never lost to a paraphrase.
+"""
 
 from __future__ import annotations
 
@@ -23,7 +36,8 @@ _TEXT_NORMALIZE_PROMPT = (
 
 _FIGURE_CAPTION_PROMPT = (
     "Describe this figure factually in 1-3 sentences, focusing on what it "
-    "shows and any labeled values. Do not speculate beyond what is visible."
+    "shows and any labeled values. Only state numbers that are clearly legible. "
+    "Do not speculate beyond what is visible."
 )
 
 
@@ -62,27 +76,70 @@ class PrivGraphAIPipeline:
         errors = list(state.get("errors", []))
         processed: list[dict] = []
 
-        for el in elements:
+        for idx, el in enumerate(elements):
             try:
-                processed.append(self._process_single_element(el))
+                processed.append(
+                    self._process_single_element(el, self._neighbour_text(elements, idx))
+                )
             except Exception as exc:
                 logger.warning("Skipping element %s: %s", el.element_id, exc)
                 errors.append(f"process_elements[{el.element_id}]: {exc}")
 
         return {"processed_elements": processed, "errors": errors}
 
-    def _process_single_element(self, el: MultimodalElement) -> dict:
+    @staticmethod
+    def _neighbour_text(elements: list[MultimodalElement], idx: int) -> tuple[str, str]:
+        """Text element just before and just after elements[idx] (for formula context)."""
+        prev_text = next_text = ""
+        if idx > 0 and elements[idx - 1].element_type == "text":
+            prev_text = elements[idx - 1].content.strip()
+        if idx + 1 < len(elements) and elements[idx + 1].element_type == "text":
+            next_text = elements[idx + 1].content.strip()
+        return prev_text, next_text
+
+    def _process_single_element(
+        self, el: MultimodalElement, context: tuple[str, str] = ("", "")
+    ) -> dict:
         record = asdict(el)
 
-        if el.element_type == "figure" and el.image_path:
-            record["ai_description"] = self.llm.describe_image(
-                el.image_path, _FIGURE_CAPTION_PROMPT, self.config.vision_model
-            )
-        elif el.element_type in ("table", "formula") and el.content.strip():
+        if el.element_type == "figure":
+            parts: list[str] = []
+            if el.content.strip():
+                parts.append(f"Figure caption: {el.content.strip()}")
+            figure_text = (el.metadata or {}).get("figure_text", "")
+            if figure_text:
+                parts.append(
+                    "Text inside the figure (columns from left to right; a value and its "
+                    f"label are usually in the same column): {figure_text}"
+                )
+            if el.image_path:
+                try:
+                    visual = self.llm.describe_image(
+                        el.image_path, _FIGURE_CAPTION_PROMPT, self.config.vision_model
+                    )
+                    if visual and visual.strip():
+                        parts.append(f"Visual description: {visual.strip()}")
+                except Exception as exc:  # keep the figure even if the vision model fails
+                    logger.warning("Vision description failed for %s: %s", el.element_id, exc)
+            record["ai_description"] = "\n".join(parts) if parts else None
+
+        elif el.element_type == "formula":
+            if el.content.strip():
+                _, next_text = context
+                parts = [f"Formula: {el.content.strip()}"]
+                if next_text.lower().startswith(("where", "with", "in which")):
+                    parts.append(next_text)  # the sentence that defines the symbols
+                record["ai_description"] = "\n".join(parts)
+            else:
+                record["ai_description"] = None
+
+        elif el.element_type == "table" and el.content.strip():
             prompt = _TEXT_NORMALIZE_PROMPT.format(
                 kind=el.element_type, kind_upper=el.element_type.upper(), content=el.content
             )
-            record["ai_description"] = self.llm.generate_text(prompt, self.config.text_model)
+            description = self.llm.generate_text(prompt, self.config.text_model)
+            record["ai_description"] = f"{description}\n\nTable (markdown):\n{el.content}"
+
         else:
             record["ai_description"] = None
 
