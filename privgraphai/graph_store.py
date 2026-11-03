@@ -1,4 +1,15 @@
-"""In-memory multimodal knowledge graph for PrivGraphAI — Objective 2."""
+"""In-memory multimodal knowledge graph for PrivGraphAI - Objective 2.
+
+PROPOSED version. Changes from the original:
+  * add_entity / add_relation validate their inputs and raise ValueError for non-string or empty
+    names (the original crashed with "'list' object has no attribute 'strip'" when the 3B model
+    returned a list where a string belongs). The extraction agent now catches this per item.
+  * find_entities matches whole words only and ignores very short names. Before, an entity named
+    "ti" or "d" matched inside almost any question and pulled in unrelated elements.
+  * multi_hop_elements returns elements ranked: closer to the question's entities first, and
+    elements linked to several of them before elements linked to one.
+Everything else (method names, saved file format) is unchanged, so old saved graphs still load.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +21,30 @@ from typing import Optional
 import networkx as nx
 
 logger = logging.getLogger("privgraphai.graph_store")
+
+_MIN_ENTITY_CHARS = 3  # shorter entity names are too ambiguous to match inside a question
+
+
+def _clean_name(name) -> Optional[str]:
+    if not isinstance(name, str):
+        return None
+    name = " ".join(name.split())
+    return name or None
+
+
+def _contains_word(haystack: str, needle: str) -> bool:
+    """True if `needle` occurs in `haystack` as a whole word or phrase (both lower-case)."""
+    start = 0
+    while True:
+        i = haystack.find(needle, start)
+        if i == -1:
+            return False
+        before_ok = i == 0 or not haystack[i - 1].isalnum()
+        j = i + len(needle)
+        after_ok = j == len(haystack) or not haystack[j].isalnum()
+        if before_ok and after_ok:
+            return True
+        start = i + 1
 
 
 class KnowledgeGraph:
@@ -24,9 +59,17 @@ class KnowledgeGraph:
         )
 
     def add_entity(self, name: str, entity_type: str = "unknown") -> str:
-        node_id = f"entity::{name.strip().lower()}"
+        clean = _clean_name(name)
+        if clean is None:
+            raise ValueError(f"entity name must be a non-empty string, got {name!r}")
+        node_id = f"entity::{clean.lower()}"
         if not self.graph.has_node(node_id):
-            self.graph.add_node(node_id, kind="entity", name=name.strip(), entity_type=entity_type)
+            self.graph.add_node(
+                node_id,
+                kind="entity",
+                name=clean,
+                entity_type=entity_type if isinstance(entity_type, str) else "unknown",
+            )
         return node_id
 
     def link_entity_to_element(self, entity_name: str, element_id: str, entity_type: str = "unknown") -> None:
@@ -44,27 +87,42 @@ class KnowledgeGraph:
         source_type: str = "unknown",
         target_type: str = "unknown",
     ) -> None:
+        # Validate everything first, so a bad relation leaves no half-added nodes behind.
+        if _clean_name(source_entity) is None or _clean_name(target_entity) is None:
+            raise ValueError(f"relation endpoints must be non-empty strings, got {source_entity!r}, {target_entity!r}")
+        label = _clean_name(relation_label)
+        if label is None:
+            raise ValueError(f"relation label must be a non-empty string, got {relation_label!r}")
         src_id = self.add_entity(source_entity, source_type)
         tgt_id = self.add_entity(target_entity, target_type)
-        self.graph.add_edge(src_id, tgt_id, relation=relation_label)
+        self.graph.add_edge(src_id, tgt_id, relation=label)
 
     def find_entities(self, text: str) -> list[str]:
-        needle = text.strip().lower()
-        return [
-            n
-            for n, data in self.graph.nodes(data=True)
-            if data.get("kind") == "entity" and data.get("name", "").lower() in needle
-        ]
+        needle = " ".join(text.lower().split())
+        found = []
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("kind") != "entity":
+                continue
+            name = str(data.get("name", "")).lower()
+            if len(name) >= _MIN_ENTITY_CHARS and _contains_word(needle, name):
+                found.append(node_id)
+        return found
 
     def multi_hop_elements(self, seed_entity_ids: list[str], max_hops: int = 2) -> list[dict]:
+        """Elements reachable from the seed entities within `max_hops`, best first.
+
+        Each returned dict has the node data plus `hops` (1 = directly linked to a seed entity)
+        and `seed_hits` (how many seed entities link to it directly).
+        """
         if not seed_entity_ids:
             return []
 
+        seeds = set(seed_entity_ids)
         visited_entities = set(seed_entity_ids)
         frontier = list(seed_entity_ids)
         collected: dict[str, dict] = {}
 
-        for _ in range(max_hops):
+        for hop in range(1, max_hops + 1):
             next_frontier: list[str] = []
             for node_id in frontier:
                 if node_id not in self.graph:
@@ -75,7 +133,11 @@ class KnowledgeGraph:
                 for _, neighbor, _data in neighbors:
                     ndata = self.graph.nodes[neighbor]
                     if ndata.get("kind") == "element":
-                        collected[neighbor] = {"element_id": neighbor, **ndata}
+                        entry = collected.setdefault(
+                            neighbor, {"element_id": neighbor, **ndata, "hops": hop, "seed_hits": 0}
+                        )
+                        if node_id in seeds:
+                            entry["seed_hits"] += 1
                     elif ndata.get("kind") == "entity" and neighbor not in visited_entities:
                         visited_entities.add(neighbor)
                         next_frontier.append(neighbor)
@@ -83,7 +145,7 @@ class KnowledgeGraph:
             if not frontier:
                 break
 
-        return list(collected.values())
+        return sorted(collected.values(), key=lambda d: (d["hops"], -d["seed_hits"]))
 
     def stats(self) -> dict:
         kinds = [d.get("kind") for _, d in self.graph.nodes(data=True)]

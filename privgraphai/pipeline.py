@@ -108,10 +108,7 @@ class PrivGraphAIPipeline:
                 parts.append(f"Figure caption: {el.content.strip()}")
             figure_text = (el.metadata or {}).get("figure_text", "")
             if figure_text:
-                parts.append(
-                    "Text inside the figure (columns from left to right; a value and its "
-                    f"label are usually in the same column): {figure_text}"
-                )
+                parts.append(f"Text found inside the figure. {figure_text}")
             if el.image_path:
                 try:
                     visual = self.llm.describe_image(

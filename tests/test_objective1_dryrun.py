@@ -35,7 +35,7 @@ def test_pipeline_runs_end_to_end_with_fakes():
 
     by_id = {e["element_id"]: e for e in result["processed_elements"]}
     assert "normalized by" in by_id["table-0"]["ai_description"]
-    assert "normalized by" in by_id["formula-0"]["ai_description"]
+    assert by_id["formula-0"]["ai_description"].startswith("Formula: E = mc^2")
     assert "caption by" in by_id["figure-0"]["ai_description"]
     assert by_id["text-0"]["ai_description"] is None
 

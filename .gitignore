@@ -115,3 +115,4 @@ venv/
 _extracted_images/
 elements.json
 graph.json
+elements.vectors.json

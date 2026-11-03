@@ -10,6 +10,9 @@ PROPOSED version. Changes from the original (all backwards compatible):
      grouped into left-to-right columns so that a bar's value stays next to its label.
   4. Page headers/footers (page numbers etc.) are dropped.
   5. Formula LaTeX is tidied (`H _ { r a w }` becomes `H_{raw}`).
+  6. Round 2: figure text is written as "label = value" pairs ("G1 = 62.4; G2 = 71.8") when a
+     column holds one number and a label, which a small model reads far more reliably than
+     a flat list of numbers. Assumes vertical bar-chart-like layouts; other text is kept as is.
 All new behaviour can be switched off with constructor flags.
 """
 
@@ -37,6 +40,7 @@ _LIGATURE_FIXES = str.maketrans(
 )
 
 _PAGE_FURNITURE_LABELS = ("page_footer", "page_header")
+_NUMBER = re.compile(r"^[+-]?\d+(?:\.\d+)?%?$")
 
 
 def _tidy_latex(s: str) -> str:
@@ -262,7 +266,7 @@ class DoclingParser:
         return figure_texts, inside
 
     def _columns(self, items, width: float) -> str:
-        """Group texts into left-to-right columns; top-to-bottom inside a column."""
+        """Group texts into left-to-right columns, then describe them as label = value pairs."""
         tol = self.figure_column_tolerance * width
         cols: list[dict] = []
         for txt, xc, yc, bottom_left in sorted(items, key=lambda it: it[1]):
@@ -273,11 +277,26 @@ class DoclingParser:
                 col["x"] = sum(col["xs"]) / len(col["xs"])
             else:
                 cols.append({"x": xc, "xs": [xc], "items": [(txt, yc, bottom_left)]})
-        parts = []
+
+        pairs: list[str] = []
+        other: list[str] = []
         for col in cols:
             ordered = sorted(col["items"], key=lambda it: -it[1] if it[2] else it[1])
-            parts.append(" ".join(t for t, _, _ in ordered))
-        return " | ".join(parts)
+            texts = [t for t, _, _ in ordered]
+            numbers = [t for t in texts if _NUMBER.match(t)]
+            labels = [t for t in texts if not _NUMBER.match(t)]
+            if len(numbers) == 1 and labels:
+                pairs.append(f"{labels[0]} = {numbers[0]}")
+                other.extend(labels[1:])
+            else:
+                other.append(" ".join(texts))
+
+        parts = []
+        if pairs:
+            parts.append("Values by label, left to right: " + "; ".join(pairs))
+        if other:
+            parts.append("Other text: " + " | ".join(other))
+        return ". ".join(parts)
 
     @staticmethod
     def _first_page_number(item) -> Optional[int]:

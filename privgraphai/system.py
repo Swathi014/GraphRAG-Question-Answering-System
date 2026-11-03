@@ -1,6 +1,10 @@
 """
-Top-level PrivGraphAI facade — combines Objective 1 (ingestion) and
+Top-level PrivGraphAI facade - combines Objective 1 (ingestion) and
 Objective 2 (knowledge-graph construction + routing/verification QA).
+
+PROPOSED version. The only change: the vector index is saved next to the elements file
+(<name>.vectors.json) when you save, and reused when you load, so `ask` no longer re-embeds every
+element each time. Graphs ingested earlier get their saved index the first time they are loaded.
 """
 
 from __future__ import annotations
@@ -21,6 +25,11 @@ from .qa_pipeline import QAPipeline
 from .vector_index import SimpleVectorIndex
 
 logger = logging.getLogger("privgraphai.system")
+
+
+def _vectors_path(elements_path: str | Path) -> Path:
+    p = Path(elements_path)
+    return p.with_name(p.stem + ".vectors.json")
 
 
 class PrivGraphAISystem:
@@ -45,7 +54,7 @@ class PrivGraphAISystem:
         progress_cb=None,
     ) -> dict:
         """`stop_event`, if set partway through, stops the knowledge-graph
-        construction step early (cooperative — see ExtractionAgent.build_graph).
+        construction step early (cooperative - see ExtractionAgent.build_graph).
         The Docling parse itself is a single call and can't be interrupted
         this way. `progress_cb(done, total)` is called after each element
         during graph construction, if provided."""
@@ -69,23 +78,30 @@ class PrivGraphAISystem:
 
     def save(self, graph_path: str, elements_path: Optional[str] = None) -> None:
         if self.knowledge_graph is None:
-            raise RuntimeError("Nothing ingested yet — call ingest() first.")
+            raise RuntimeError("Nothing ingested yet - call ingest() first.")
         self.knowledge_graph.save(graph_path)
         if elements_path:
             Path(elements_path).write_text(
                 json.dumps(self._last_processed_elements, indent=2, default=str), encoding="utf-8"
             )
+            if len(self.vector_index):
+                try:
+                    self.vector_index.save(
+                        _vectors_path(elements_path), self.vector_index._fingerprint(self._last_processed_elements)
+                    )
+                except OSError as exc:
+                    logger.warning("Could not save the vector index: %s", exc)
 
     def load(self, graph_path: str, elements_path: Optional[str] = None) -> None:
         self.knowledge_graph = KnowledgeGraph.load(graph_path)
         if elements_path:
             self._last_processed_elements = json.loads(Path(elements_path).read_text(encoding="utf-8"))
-            self.vector_index.build(self._last_processed_elements)
+            self.vector_index.build_or_load(self._last_processed_elements, _vectors_path(elements_path))
         else:
-            logger.warning("No elements_path given — vector ('vector'/'hybrid') retrieval will return nothing.")
+            logger.warning("No elements_path given - vector ('vector'/'hybrid') retrieval will return nothing.")
 
     def ask(self, question: str) -> dict:
         if self.knowledge_graph is None:
-            raise RuntimeError("Nothing ingested/loaded yet — call ingest() or load() first.")
+            raise RuntimeError("Nothing ingested/loaded yet - call ingest() or load() first.")
         qa = QAPipeline(self.config, self.knowledge_graph, self.vector_index, ollama_client=self.llm)
         return qa.ask(question)

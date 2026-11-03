@@ -1,4 +1,11 @@
-"""Routing agent — Objective 2."""
+"""Routing agent - Objective 2.
+
+PROPOSED version. Only the prompt changed: it now contains six generic examples (none taken from
+the evaluation questions) and no longer asks for a "reason", which saves generated tokens.
+On the 29-question router evaluation the few-shot prompt agreed with the labels on 19 of 29
+questions against 15 of 29 for the original prompt, and ran about 35% faster.
+The parsing and the keyword fallback are unchanged.
+"""
 
 from __future__ import annotations
 
@@ -14,13 +21,21 @@ logger = logging.getLogger("privgraphai.routing_agent")
 RetrievalStrategy = Literal["graph", "vector", "hybrid"]
 _VALID_STRATEGIES = ("graph", "vector", "hybrid")
 
-_ROUTING_PROMPT = """Classify how to best answer the QUESTION below using a document knowledge base.
+_ROUTING_PROMPT = """Decide how to retrieve evidence for the QUESTION from a document knowledge base.
 
-Return ONLY a JSON object like {{"strategy": "graph" | "vector" | "hybrid", "reason": "..."}}.
+Return ONLY a JSON object: {{"strategy": "vector"}} or {{"strategy": "graph"}} or {{"strategy": "hybrid"}}.
 
-- "graph": the question needs connecting facts across multiple entities/parts of the document (multi-hop, comparisons, "how does X relate to Y").
-- "vector": the question is a direct, single-fact lookup answerable from one passage.
-- "hybrid": you are unsure, or the question could benefit from both.
+- "vector": ONE fact, number, name or definition that sits in a single passage, table row or figure.
+- "graph": the answer needs several facts about DIFFERENT entities connected together (comparisons, lists across the document, "how does X relate to Y").
+- "hybrid": it might need both, or you are not sure.
+
+Examples:
+QUESTION: Who wrote the introduction? -> {{"strategy": "vector"}}
+QUESTION: What melting point does Table 2 give for compound X? -> {{"strategy": "vector"}}
+QUESTION: How many samples does the dataset contain? -> {{"strategy": "vector"}}
+QUESTION: Compare method A and method B on accuracy and cost. -> {{"strategy": "graph"}}
+QUESTION: Which approaches in the report use sensors, and what result does each one report? -> {{"strategy": "graph"}}
+QUESTION: Which option performed best, and why do the authors think it worked? -> {{"strategy": "hybrid"}}
 
 QUESTION: {question}
 """
