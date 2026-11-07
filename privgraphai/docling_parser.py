@@ -13,6 +13,12 @@ PROPOSED version. Changes from the original (all backwards compatible):
   6. Round 2: figure text is written as "label = value" pairs ("G1 = 62.4; G2 = 71.8") when a
      column holds one number and a label, which a small model reads far more reliably than
      a flat list of numbers. Assumes vertical bar-chart-like layouts; other text is kept as is.
+  7. Round 3 (after the research-paper test in the web UI): long paragraphs are split into
+     overlapping, sentence-aware chunks of about 900 characters, and large tables are split into one
+     element per row ("Table 2 - row 7: Model = G-Retriever; Pruning = PCST; ..."). A whole paragraph or
+     a 30-row table as ONE element embeds as a blur, is cut by the evidence budget, and had only its first
+     1,200 characters sent to graph extraction. Chunk ids look like text-549_1, text-549_2; row ids like
+     table-3_12.
 All new behaviour can be switched off with constructor flags.
 """
 
@@ -40,6 +46,9 @@ _LIGATURE_FIXES = str.maketrans(
 )
 
 _PAGE_FURNITURE_LABELS = ("page_footer", "page_header")
+_MAX_TEXT_CHARS = 900        # longer paragraphs are split into chunks of about this size
+_TEXT_OVERLAP = 120          # characters carried over between consecutive chunks
+_TABLE_WHOLE_MAX_CHARS = 1500  # tables up to this size stay one element; bigger ones become one element per row
 _NUMBER = re.compile(r"^[+-]?\d+(?:\.\d+)?%?$")
 
 
@@ -56,6 +65,56 @@ def _tidy_latex(s: str) -> str:
     s = re.sub(r"\{([^{}]*)\}", brace, s)
     s = re.sub(r"\s*_\s*", "_", s)
     return re.sub(r"\s+", " ", s)
+
+
+def _split_text(text: str, max_chars: int = _MAX_TEXT_CHARS, overlap: int = _TEXT_OVERLAP) -> list[str]:
+    """Split text into sentence-aware chunks of at most about `max_chars`, with a small overlap."""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return [text]
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    # a single very long "sentence" (a list, a table dump) is hard-split so no chunk explodes
+    pieces: list[str] = []
+    for sent in sentences:
+        while len(sent) > max_chars:
+            pieces.append(sent[:max_chars])
+            sent = sent[max_chars:]
+        if sent:
+            pieces.append(sent)
+
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for piece in pieces:
+        if current and size + len(piece) + 1 > max_chars:
+            chunks.append(" ".join(current))
+            # carry the last sentence(s) over, up to `overlap` characters
+            carry: list[str] = []
+            carried = 0
+            for prev in reversed(current):
+                if carried + len(prev) > overlap and carry:
+                    break
+                if len(prev) > overlap:
+                    break
+                carry.insert(0, prev)
+                carried += len(prev) + 1
+            current, size = carry, carried
+        current.append(piece)
+        size += len(piece) + 1
+    if current:
+        chunks.append(" ".join(current))
+    return chunks
+
+
+def _column_name(col) -> str:
+    if isinstance(col, tuple):
+        parts: list[str] = []
+        for part in col:
+            part = str(part).strip()
+            if part and not part.lower().startswith("unnamed") and part not in parts:
+                parts.append(part)
+        return " / ".join(parts)
+    return str(col).strip()
 
 
 @dataclass
@@ -77,6 +136,9 @@ class DoclingParser:
         export_picture_images: bool = True,
         drop_page_furniture: bool = True,
         figure_column_tolerance: float = 0.06,
+        max_text_chars: int = _MAX_TEXT_CHARS,
+        text_overlap: int = _TEXT_OVERLAP,
+        split_large_tables: bool = True,
     ):
         self.image_export_dir = Path(image_export_dir)
         self.image_export_dir.mkdir(parents=True, exist_ok=True)
@@ -87,6 +149,9 @@ class DoclingParser:
         # Texts whose centres are within this fraction of the figure width are
         # treated as one column (e.g. a bar's value and its category label).
         self.figure_column_tolerance = figure_column_tolerance
+        self.max_text_chars = max_text_chars          # 0 switches paragraph splitting off
+        self.text_overlap = text_overlap
+        self.split_large_tables = split_large_tables
         self._converter: Any = None
 
     # ------------------------------------------------------------------ setup
@@ -158,15 +223,33 @@ class DoclingParser:
             content = (getattr(item, "text", "") or "").translate(_LIGATURE_FIXES)
             if element_type == "formula":
                 content = _tidy_latex(content)
-            elements.append(
-                MultimodalElement(
-                    element_id=f"text-{i}",
-                    element_type=element_type,
-                    page_number=self._first_page_number(item),
-                    content=content,
-                    metadata={"label": label},
-                )
+            page = self._first_page_number(item)
+            chunks = (
+                _split_text(content, self.max_text_chars, self.text_overlap)
+                if element_type == "text" and self.max_text_chars and len(content) > self.max_text_chars
+                else [content]
             )
+            if len(chunks) == 1:
+                elements.append(
+                    MultimodalElement(
+                        element_id=f"text-{i}",
+                        element_type=element_type,
+                        page_number=page,
+                        content=content,
+                        metadata={"label": label},
+                    )
+                )
+            else:
+                for k, chunk in enumerate(chunks, start=1):
+                    elements.append(
+                        MultimodalElement(
+                            element_id=f"text-{i}_{k}",
+                            element_type="text",
+                            page_number=page,
+                            content=chunk,
+                            metadata={"label": label, "parent": f"text-{i}", "chunk": k, "of": len(chunks)},
+                        )
+                    )
         return elements
 
     # ---------------------------------------------------------------- tables
@@ -177,15 +260,66 @@ class DoclingParser:
                 content = table.export_to_markdown(doc=doc)
             except Exception:
                 content = str(table)
+            page = self._first_page_number(table)
+
+            rows = self._table_rows(table, doc) if self.split_large_tables and len(content) > _TABLE_WHOLE_MAX_CHARS else None
+            if not rows:
+                elements.append(
+                    MultimodalElement(element_id=f"table-{i}", element_type="table", page_number=page, content=content)
+                )
+                continue
+
+            caption = ""
+            caption_fn = getattr(table, "caption_text", None)
+            if callable(caption_fn):
+                try:
+                    caption = (caption_fn(doc) or "").strip()
+                except Exception:
+                    caption = ""
+            caption = caption or f"Table {i + 1}"
+            columns, body = rows
             elements.append(
                 MultimodalElement(
                     element_id=f"table-{i}",
                     element_type="table",
-                    page_number=self._first_page_number(table),
-                    content=content,
+                    page_number=page,
+                    content=f"{caption}. Columns: {', '.join(c for c in columns if c)}. "
+                            f"The table has {len(body)} rows, listed as separate elements.",
+                    metadata={"table_overview": True},
                 )
             )
+            for j, values in enumerate(body, start=1):
+                cells = "; ".join(f"{col} = {val}" for col, val in zip(columns, values) if col and val)
+                if not cells:
+                    continue
+                elements.append(
+                    MultimodalElement(
+                        element_id=f"table-{i}_{j}",
+                        element_type="table",
+                        page_number=page,
+                        content=f"{caption} - row {j}: {cells}",
+                        metadata={"table_row": True, "table": f"table-{i}", "row": j},
+                    )
+                )
         return elements
+
+    @staticmethod
+    def _table_rows(table, doc):
+        """(column names, list of row value lists) from Docling's dataframe export, or None."""
+        try:
+            try:
+                df = table.export_to_dataframe(doc=doc)
+            except TypeError:
+                df = table.export_to_dataframe()
+        except Exception as exc:
+            logger.warning("Could not export a table as rows (%s); keeping it as one element", exc)
+            return None
+        if df is None or len(df) == 0:
+            return None
+        columns = [_column_name(c) for c in df.columns]
+        body = [[str(v).strip() if v is not None and str(v).lower() != "nan" else "" for v in row]
+                for row in df.itertuples(index=False, name=None)]
+        return columns, body
 
     # --------------------------------------------------------------- figures
     def _extract_figures(self, doc, figure_texts: Optional[dict] = None) -> list[MultimodalElement]:

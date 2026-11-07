@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Optional
 
 from langgraph.graph import END, StateGraph
@@ -43,6 +44,7 @@ from .verification_agent import VerificationAgent
 
 logger = logging.getLogger("privgraphai.qa_pipeline")
 
+_ID_RE = re.compile(r"^(.*?)-(\d+)(?:_(\d+))?$")   # text-12, text-12_3 (chunk), table-3_12 (row)
 _VECTOR_TOP_K = 8
 _RETRY_VECTOR_TOP_K = 16
 _GRAPH_BACKSTOP_TOP_K = 4    # vector hits added after graph evidence on the "graph" route
@@ -160,8 +162,11 @@ class QAPipeline:
         """
 
         def sort_key(item: dict):
-            kind, _, num = str(item.get("element_id", "")).rpartition("-")
-            return (kind, int(num) if num.isdigit() else 0)
+            eid = str(item.get("element_id", ""))
+            m = _ID_RE.match(eid)
+            if m:
+                return (m.group(1), int(m.group(2)), int(m.group(3) or 0))
+            return (eid, 0, 0)
 
         def render(item: dict, limit: Optional[int] = None) -> str:
             content = item.get("content", "") or ""

@@ -10,7 +10,9 @@ PROPOSED version. Changes from the original:
     (it defines the symbols). Other neighbouring text is not added, because it made the
     formula element match unrelated questions.
   * Tables: the LLM description is kept, and the exact markdown table is appended so
-    numbers are never lost to a paraphrase.
+    numbers are never lost to a paraphrase. Row elements and table overviews (large tables are split
+    into one element per row by the parser) are used as they are: no LLM call, so a 30-row table does
+    not cost 30 paraphrase calls.
 """
 
 from __future__ import annotations
@@ -130,7 +132,12 @@ class PrivGraphAIPipeline:
             else:
                 record["ai_description"] = None
 
-        elif el.element_type == "table" and el.content.strip():
+        elif (
+            el.element_type == "table"
+            and el.content.strip()
+            and not (el.metadata or {}).get("table_row")
+            and not (el.metadata or {}).get("table_overview")
+        ):
             prompt = _TEXT_NORMALIZE_PROMPT.format(
                 kind=el.element_type, kind_upper=el.element_type.upper(), content=el.content
             )

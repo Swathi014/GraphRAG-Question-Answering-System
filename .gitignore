@@ -82,6 +82,7 @@ logs/
 outputs/
 eval_results/
 ragas_eval_cache/
+*.json
 
 # ==========================================
 # 6. IDEs, Editors & OS System Files
@@ -113,6 +114,4 @@ venv/
 
 # Local Extraction Artifacts & Graph Exports
 _extracted_images/
-elements.json
-graph.json
-elements.vectors.json
+
